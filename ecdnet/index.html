@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECDNet | Embodied Intelligence for Spectrum Map Construction</title>
+  <meta name="description" content="ECDNet couples spectrum map construction with UAV flight decisions. With the first 41 readings of a flight route, ECDNet reconstructs four-band spectrum maps with lower error than U-Net with the first 164 readings.">
+  <link rel="canonical" href="https://lht-research.github.io/ecdnet/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Embodied Intelligence for Spectrum Map Construction in Low-Altitude Wireless Networks">
+  <meta property="og:description" content="A UAV builds a four-band spectrum map while it flies and uses the evolving map to decide where to measure next.">
+  <meta property="og:url" content="https://lht-research.github.io/ecdnet/">
+  <meta property="og:image" content="https://lht-research.github.io/ecdnet/assets/framework.png">
+  <meta name="citation_title" content="Embodied Intelligence for Spectrum Map Construction in Low-Altitude Wireless Networks">
+  <meta name="citation_author" content="Liang, Hongtao">
+  <meta name="citation_author" content="Wan, Yiyao">
+  <meta name="citation_author" content="Ji, Jiahuan">
+  <meta name="citation_author" content="Meng, Lingda">
+  <meta name="citation_author" content="Zhou, Fuhui">
+  <meta name="citation_author" content="Wu, Qihui">
+  <meta name="theme-color" content="#14172a">
+  <link rel="preload" href="assets/fonts/termes-regular.woff" as="font" type="font/woff" crossorigin>
+  <link rel="preload" href="assets/fonts/sourcesans3-400.woff" as="font" type="font/woff" crossorigin>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/site.css">
+  <script src="assets/explorer-data.js" defer></script>
+  <script src="assets/chart-data.js" defer></script>
+  <script src="assets/site.js" defer></script>
+</head>
+<body>
+  <a href="#main" class="skip">Skip to content</a>
+
+  <header class="hero" id="top">
+    <nav class="shell topnav" aria-label="Sections">
+      <a class="wordmark" href="#top">ECDNet</a>
+      <ul>
+        <li><a href="#results">Results</a></li>
+        <li><a href="#method">Method</a></li>
+        <li><a href="#platform">Platform</a></li>
+        <li><a href="#cite">Cite</a></li>
+      </ul>
+    </nav>
+
+    <div class="shell hero-head">
+      <h1>Embodied Intelligence for Spectrum Map Construction in Low-Altitude Wireless Networks</h1>
+      <p class="authors">Hongtao Liang, Yiyao Wan, Jiahuan Ji, Lingda Meng, Fuhui Zhou, Qihui Wu</p>
+      <p class="affil">Nanjing University of Aeronautics and Astronautics</p>
+      <ul class="links">
+        <!-- After the arXiv announcement, set href to the arXiv abstract page and remove the hidden attribute. -->
+        <li hidden><a class="btn" id="paper-link" href="">Paper</a></li>
+        <li><a class="btn solid" href="#cite">BibTeX</a></li>
+      </ul>
+    </div>
+
+    <section class="shell explorer" aria-labelledby="explorer-title">
+      <h2 id="explorer-title" class="visually-hidden">Interactive comparison along one flight route</h2>
+      <p class="lead">A single UAV flies one continuous route and takes one signal strength reading per step. ECDNet reconstructs the spectrum map from the first 41 readings. U-Net receives the first 164 readings of the same route.</p>
+
+      <div class="panels">
+        <figure class="panel" data-panel="truth">
+          <canvas role="img" aria-label="Ground-truth spectrum map at 3.5 GHz with the flight route"></canvas>
+          <figcaption><span class="pname">Ground truth at 3.5 GHz</span><span class="pval" id="val-truth">Route of 164 readings</span></figcaption>
+        </figure>
+        <figure class="panel" data-panel="ecdnet">
+          <canvas role="img" aria-label="Spectrum map reconstructed by ECDNet from the first 41 readings"></canvas>
+          <figcaption><span class="pname">ECDNet, first 41 readings</span><span class="pval" id="val-ecdnet" aria-live="polite"></span></figcaption>
+        </figure>
+        <figure class="panel" data-panel="unet">
+          <canvas role="img" aria-label="Spectrum map reconstructed by U-Net from the first 164 readings"></canvas>
+          <figcaption><span class="pname">U-Net, first 164 readings</span><span class="pval" id="val-unet" aria-live="polite"></span></figcaption>
+        </figure>
+        <div class="cbar" aria-hidden="true">
+          <div class="cbar-ramp"></div>
+          <div class="cbar-ticks"><span style="--p:0%">&minus;85</span><span style="--p:25%">&minus;70</span><span style="--p:50%">&minus;55</span><span style="--p:75%">&minus;40</span><span style="--p:100%">&minus;25</span></div>
+          <div class="cbar-unit">RSSI (dBm)</div>
+        </div>
+      </div>
+
+      <div class="timeline">
+        <button type="button" class="btn" id="replay">Replay flight</button>
+        <div class="scrub">
+          <label for="scrub" class="visually-hidden">Readings collected</label>
+          <input type="range" id="scrub" min="0" max="164" step="1" value="164">
+          <div class="scrub-marks" aria-hidden="true"><span style="left:0%">0</span><span style="left:25%">41</span><span style="left:100%">164</span></div>
+        </div>
+        <p class="count" id="count" aria-live="off"><strong>164</strong> of 164 readings</p>
+      </div>
+
+      <fieldset class="routes">
+        <legend>Route</legend>
+        <div class="chips" id="route-chips"></div>
+      </fieldset>
+      <p class="route-note" id="route-note"></p>
+      <p class="scene-note">The scene contains two transmitters and two obstacles. Stars mark the transmitters, outlined boxes mark the obstacles, and the white line traces the route in reading order.</p>
+      <noscript><p class="scene-note">The interactive comparison needs JavaScript. The figures and tables below are available without it.</p></noscript>
+    </section>
+  </header>
+
+  <main id="main">
+    <section class="shell section" id="results" aria-labelledby="results-title">
+      <h2 id="results-title">Results</h2>
+
+      <div class="block">
+        <div class="prose">
+          <h3>Error against the number of readings</h3>
+          <p>On the 64 &times; 64 grid with the non-revisiting spiral sampling pattern, ECDNet attains the lowest RMSE among all compared methods at every sampling rate. With 41 readings, or 1.00% of the grid, ECDNet reaches 4.042 dBm, which is lower than the 5.335 dBm of U-Net with 164 readings, or 4.00% of the grid.</p>
+        </div>
+        <figure class="chart" id="chart-rates">
+          <ul class="legend" id="legend-rates"></ul>
+          <div class="plot"></div>
+          <figcaption>RMSE of five methods at six sampling rates, reported in Table II of the paper. Hover over or focus a sampling rate to read every value.</figcaption>
+          <details class="data">
+            <summary>Show the values as a table</summary>
+            <div class="table-wrap"><table><caption class="visually-hidden">RMSE in dBm and SSIM for each method and number of readings</caption><thead><tr><th scope="col">Method</th><th scope="col">10 (0.24%)</th><th scope="col">41 (1.00%)</th><th scope="col">82 (2.00%)</th><th scope="col">123 (3.00%)</th><th scope="col">164 (4.00%)</th><th scope="col">200 (4.88%)</th></tr></thead><tbody><tr class="ours"><th scope="row">ECDNet</th><td>6.689 / 0.644</td><td>4.042 / 0.780</td><td>3.155 / 0.810</td><td>2.847 / 0.820</td><td>2.787 / 0.822</td><td>2.746 / 0.823</td></tr><tr><th scope="row">U-Net</th><td>11.005 / 0.483</td><td>8.078 / 0.589</td><td>6.335 / 0.646</td><td>5.781 / 0.665</td><td>5.335 / 0.673</td><td>4.924 / 0.684</td></tr><tr><th scope="row">KG-Net</th><td>11.428 / 0.508</td><td>10.118 / 0.547</td><td>9.114 / 0.570</td><td>8.527 / 0.582</td><td>8.098 / 0.588</td><td>7.769 / 0.593</td></tr><tr><th scope="row">AE3D</th><td>12.058 / 0.454</td><td>11.670 / 0.454</td><td>11.296 / 0.457</td><td>10.896 / 0.460</td><td>10.525 / 0.475</td><td>10.093 / 0.482</td></tr><tr><th scope="row">Kriging</th><td>13.096 / 0.605</td><td>12.468 / 0.585</td><td>12.048 / 0.565</td><td>11.827 / 0.552</td><td>12.117 / 0.529</td><td>12.164 / 0.512</td></tr></tbody></table><p>Each cell gives RMSE (dBm) / SSIM. The column headings give the number of readings and the sampling rate of the 64 &times; 64 grid.</p></div>
+          </details>
+        </figure>
+      </div>
+
+      <div class="block">
+        <div class="prose">
+          <h3>Nine continuous routes on 120 additional scenes</h3>
+          <p>The comparison was repeated along nine continuous routes on 120 held-out scenes that were generated after model selection, with transmitter powers perturbed within 1.5 dB of the nominal values. Along each route, ECDNet uses the first 41 readings and U-Net uses the first 164 readings. ECDNet attains the lower mean RMSE along all nine routes, and the lower RMSE in 88 to 112 of the 120 scenes for each route.</p>
+        </div>
+        <figure class="chart" id="chart-routes">
+          <ul class="legend" id="legend-routes"></ul>
+          <div class="plot"></div>
+          <figcaption>Mean RMSE with 95% bootstrap confidence intervals over the 120 scenes. Routes are ordered by the mean paired difference between the two methods. The random walk over legal actions is averaged over five seeds.</figcaption>
+          <details class="data">
+            <summary>Show the values as a table</summary>
+            <div class="table-wrap"><table><caption class="visually-hidden">Mean RMSE along nine routes on 120 held-out scenes</caption><thead><tr><th scope="col">Route</th><th scope="col">ECDNet, 41 readings (dBm)</th><th scope="col">U-Net, 164 readings (dBm)</th><th scope="col">Mean paired difference (dB)</th><th scope="col">Scenes where ECDNet is lower</th></tr></thead><tbody><tr><th scope="row">Random walk</th><td>4.105 [3.646, 4.600]</td><td>7.982 [7.587, 8.388]</td><td>3.877 [3.403, 4.347]</td><td>112 of 120</td></tr><tr><th scope="row">Diagonal sweep</th><td>3.518 [3.098, 3.959]</td><td>6.228 [5.836, 6.630]</td><td>2.710 [2.181, 3.247]</td><td>99 of 120</td></tr><tr><th scope="row">Outward spiral</th><td>2.712 [2.186, 3.324]</td><td>5.033 [4.771, 5.315]</td><td>2.321 [1.730, 2.848]</td><td>110 of 120</td></tr><tr><th scope="row">Autonomous policy</th><td>4.072 [3.559, 4.647]</td><td>6.297 [5.863, 6.756]</td><td>2.225 [1.572, 2.831]</td><td>96 of 120</td></tr><tr><th scope="row">Action cycle</th><td>4.656 [4.062, 5.297]</td><td>6.574 [6.162, 7.012]</td><td>1.918 [1.137, 2.661]</td><td>88 of 120</td></tr><tr><th scope="row">Center spiral (Table II)</th><td>3.234 [2.513, 4.059]</td><td>4.880 [4.625, 5.154]</td><td>1.646 [0.868, 2.318]</td><td>103 of 120</td></tr><tr><th scope="row">Column sweep</th><td>3.536 [3.003, 4.139]</td><td>4.833 [4.586, 5.089]</td><td>1.297 [0.704, 1.843]</td><td>96 of 120</td></tr><tr><th scope="row">Row sweep</th><td>3.367 [2.880, 3.915]</td><td>4.507 [4.284, 4.746]</td><td>1.140 [0.614, 1.607]</td><td>98 of 120</td></tr><tr><th scope="row">Inward rings</th><td>3.301 [2.845, 3.826]</td><td>4.141 [3.953, 4.347]</td><td>0.840 [0.330, 1.302]</td><td>88 of 120</td></tr></tbody></table><p>Brackets give 95% bootstrap confidence intervals over scenes (10,000 resamples). The paired difference is the RMSE of U-Net minus the RMSE of ECDNet.</p></div>
+          </details>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section band" id="method" aria-labelledby="method-title">
+      <div class="shell">
+        <h2 id="method-title">Method</h2>
+        <div class="prose">
+          <p>ECDNet couples spectrum map construction with flight decisions in a closed perception, cognition, and execution loop. Each new reading updates the map, and the updated map guides the next move of the UAV.</p>
+        </div>
+        <dl class="loop">
+          <div><dt>Perception</dt><dd>Sparse multiband signal strength readings, the UAV pose, and an obstacle map from onboard sensing form the observation.</dd></div>
+          <div><dt>Cognition</dt><dd>A physics-informed encoder and decoder with distance-aware convolutions estimate the dense four-band map and extract a global semantic representation.</dd></div>
+          <div><dt>Active exploration</dt><dd>The policy combines local map information with the semantic representation passed through the semantic bridge and selects the next sensing action.</dd></div>
+        </dl>
+        <figure class="figure">
+          <img src="assets/framework.png" width="1356" height="614" loading="lazy" alt="ECDNet framework with UAV sensing, the physics-informed spectrum estimator, the semantic bridge, and the exploration policy connected in a closed loop.">
+          <figcaption>Framework of ECDNet. The semantic bridge passes global map features to the exploration policy, and the measurement from each action feeds back into the estimator.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="shell section" id="platform" aria-labelledby="platform-title">
+      <h2 id="platform-title">Onboard platform</h2>
+      <div class="prose">
+        <p>The UAV carries a spectrum analyzer, a LiDAR, positioning sensors, and a Jetson Orin NX. The complete cognition and decision chain of ECDNet runs onboard, and the model loop takes 37.33 ms on average (38.48 ms at the 95th percentile), which is less than 40% of the 100 ms control period.</p>
+      </div>
+      <figure class="latency" id="latency">
+        <div class="seg" role="img" aria-label="Onboard latency within one 100 millisecond control period. Cognition 27.63 ms, decision 8.16 ms, masking and action generation 1.54 ms, remaining 62.67 ms.">
+          <span class="s1" style="flex:27.63" tabindex="0" data-name="Cognition" data-ms="27.63"><i class="lbl">Cognition 27.63 ms</i></span>
+          <span class="s2" style="flex:8.16" tabindex="0" data-name="Decision" data-ms="8.16"><i class="lbl">8.16 ms</i></span>
+          <span class="s3" style="flex:1.54" tabindex="0" data-name="Masking and action generation" data-ms="1.54"></span>
+          <span class="s4" style="flex:62.67" tabindex="0" data-name="Remaining control period" data-ms="62.67"><i class="lbl">Remaining 62.67 ms</i></span>
+        </div>
+        <div class="seg-axis" aria-hidden="true"><span style="left:0%">0 ms</span><span style="left:50%">50 ms</span><span style="left:100%">100 ms</span></div>
+        <ul class="legend">
+          <li><span class="key dot" style="background:#1f4c88"></span>Cognition</li>
+          <li><span class="key dot" style="background:#4f7dbd"></span>Decision</li>
+          <li><span class="key dot" style="background:#8fb0dc"></span>Masking and action generation</li>
+          <li><span class="key dot" style="background:#e6e8ee"></span>Remaining control period</li>
+        </ul>
+        <figcaption>Average onboard latency of each stage within one control period, measured on the Jetson Orin NX with GPU-resident inputs and FP32 inference, as reported in Table I of the paper.</figcaption>
+      </figure>
+      <dl class="specs">
+        <div><dt>Onboard computer</dt><dd>Jetson Orin NX, 16 GB</dd></div>
+        <div><dt>Power mode</dt><dd>25 W</dd></div>
+        <div><dt>Control period</dt><dd>100 ms</dd></div>
+        <div><dt>Endurance</dt><dd>18 min</dd></div>
+      </dl>
+      <div class="duo">
+        <figure class="figure">
+          <img src="assets/prototype.png" width="666" height="406" loading="lazy" alt="The UAV platform with GPS, LiDAR, flight controller, onboard computer, battery, and spectrum analyzer.">
+          <figcaption>Hardware of the UAV platform.</figcaption>
+        </figure>
+        <figure class="figure">
+          <img src="assets/field.jpg" width="874" height="640" loading="lazy" alt="Field demonstrations on an open campus and in a forest, with the UAV, the signal source, the flight route, and the predicted spectrum map.">
+          <figcaption>Field demonstrations on an open campus (Scenario 1) and in a forest with vegetation and nearby obstacles (Scenario 2).</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="shell section" id="cite" aria-labelledby="cite-title">
+      <h2 id="cite-title">Citation</h2>
+<pre><code id="bibtex">@misc{liang2026ecdnet,
+  title  = {Embodied Intelligence for Spectrum Map Construction
+            in Low-Altitude Wireless Networks},
+  author = {Liang, Hongtao and Wan, Yiyao and Ji, Jiahuan and
+            Meng, Lingda and Zhou, Fuhui and Wu, Qihui},
+  year   = {2026},
+  howpublished = {Project page},
+  url    = {https://lht-research.github.io/ecdnet/}
+}</code></pre>
+      <div class="bib-head"><button type="button" id="copy-bib" hidden>Copy BibTeX</button><a href="citation.bib" download>Download citation.bib</a><span id="copy-state" role="status"></span></div>
+    </section>
+  </main>
+
+  <footer class="shell footer">
+    <p>ECDNet, Nanjing University of Aeronautics and Astronautics</p>
+  </footer>
+</body>
+</html>
