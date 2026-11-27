@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ECDNet | Embodied Intelligence for Spectrum Map Construction</title>
-  <meta name="description" content="ECDNet couples spectrum map construction with UAV flight decisions. With the first 41 readings of a flight route, ECDNet reconstructs four-band spectrum maps with lower error than U-Net with the first 164 readings.">
+  <meta name="description" content="ECDNet couples spectrum map construction with UAV flight decisions in a closed perception, cognition, and execution loop, and builds four-band spectrum maps from sparse readings while the UAV explores.">
   <link rel="canonical" href="https://lht-research.github.io/ecdnet/">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Embodied Intelligence for Spectrum Map Construction in Low-Altitude Wireless Networks">
@@ -18,12 +18,13 @@
   <meta name="citation_author" content="Meng, Lingda">
   <meta name="citation_author" content="Zhou, Fuhui">
   <meta name="citation_author" content="Wu, Qihui">
+  <meta name="citation_arxiv_id" content="2611.32799">
   <meta name="theme-color" content="#14172a">
   <link rel="preload" href="assets/fonts/termes-regular.woff" as="font" type="font/woff" crossorigin>
   <link rel="preload" href="assets/fonts/sourcesans3-400.woff" as="font" type="font/woff" crossorigin>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/site.css">
-  <script src="assets/explorer-data.js?v=c2278d0b0c08" defer></script>
+  <script src="assets/explorer-data.js" defer></script>
   <script src="assets/chart-data.js" defer></script>
   <script src="assets/site.js" defer></script>
 </head>
@@ -37,6 +38,7 @@
         <li><a href="#results">Results</a></li>
         <li><a href="#method">Method</a></li>
         <li><a href="#platform">Platform</a></li>
+        
         <li><a href="#cite">Cite</a></li>
       </ul>
     </nav>
@@ -46,28 +48,24 @@
       <p class="authors">Hongtao Liang, Yiyao Wan, Jiahuan Ji, Lingda Meng, Fuhui Zhou, Qihui Wu</p>
       <p class="affil">Nanjing University of Aeronautics and Astronautics</p>
       <ul class="links">
-        <!-- After the arXiv announcement, set href to the arXiv abstract page and remove the hidden attribute. -->
         <li><a class="btn solid" id="paper-link" href="https://arxiv.org/abs/2611.32799">Paper</a></li>
+        
         <li><a class="btn" href="#cite">BibTeX</a></li>
       </ul>
     </div>
 
     <section class="shell explorer" aria-labelledby="explorer-title">
-      <h2 id="explorer-title" class="visually-hidden">Interactive comparison along one flight route</h2>
-      <p class="lead">A single UAV flies one continuous route and takes one signal strength reading per step. ECDNet reconstructs the spectrum map from the first 41 readings. U-Net receives the first 164 readings of the same route.</p>
+      <h2 id="explorer-title" class="visually-hidden">Closed-loop spectrum map construction</h2>
+      <p class="lead">The UAV explores an unknown scene and takes one signal strength reading per step. ECDNet updates the four-band spectrum map after every reading and uses the evolving map to choose where to fly next.</p>
 
-      <div class="panels">
+      <div class="panels two">
         <figure class="panel" data-panel="truth">
-          <canvas role="img" aria-label="Ground-truth spectrum map at 3.5 GHz with the flight route"></canvas>
-          <figcaption><span class="pname">Ground truth at 3.5 GHz</span><span class="pval" id="val-truth">Route of 164 readings</span></figcaption>
+          <canvas role="img" aria-label="Ground-truth spectrum map with the UAV route"></canvas>
+          <figcaption><span class="pname">Ground truth</span><span class="pval" id="val-truth"></span></figcaption>
         </figure>
-        <figure class="panel" data-panel="ecdnet">
-          <canvas role="img" aria-label="Spectrum map reconstructed by ECDNet from the first 41 readings"></canvas>
-          <figcaption><span class="pname">ECDNet, first 41 readings</span><span class="pval" id="val-ecdnet" aria-live="polite"></span></figcaption>
-        </figure>
-        <figure class="panel" data-panel="unet">
-          <canvas role="img" aria-label="Spectrum map reconstructed by U-Net from the first 164 readings"></canvas>
-          <figcaption><span class="pname">U-Net, first 164 readings</span><span class="pval" id="val-unet" aria-live="polite"></span></figcaption>
+        <figure class="panel" data-panel="estimate">
+          <canvas role="img" aria-label="Spectrum map estimated by ECDNet at the current step"></canvas>
+          <figcaption><span class="pname">ECDNet estimate</span><span class="pval" id="val-estimate" aria-live="polite"></span></figcaption>
         </figure>
         <div class="cbar" aria-hidden="true">
           <div class="cbar-ramp"></div>
@@ -79,58 +77,49 @@
       <div class="timeline">
         <button type="button" class="btn" id="replay">Replay flight</button>
         <div class="scrub">
-          <label for="scrub" class="visually-hidden">Readings collected</label>
-          <input type="range" id="scrub" min="0" max="164" step="1" value="164">
-          <div class="scrub-marks" aria-hidden="true"><span style="left:0%">0</span><span style="left:25%">41</span><span style="left:100%">164</span></div>
+          <label for="scrub" class="visually-hidden">Flight step</label>
+          <input type="range" id="scrub" min="0" max="205" step="1" value="205">
+          <div class="spark" id="spark" aria-hidden="true"></div>
         </div>
-        <p class="count" id="count" aria-live="off"><strong>164</strong> of 164 readings</p>
+        <p class="count" id="count" aria-live="off"></p>
       </div>
 
-      <fieldset class="routes">
-        <legend>Route</legend>
-        <div class="chips" id="route-chips"></div>
-      </fieldset>
-      <p class="route-note" id="route-note"></p>
-      <p class="scene-note">The scene contains one transmitter and three obstacles. The star marks the transmitter, outlined boxes mark the obstacles, and the white line traces the route in reading order.</p>
-      <noscript><p class="scene-note">The interactive comparison needs JavaScript. The figures and tables below are available without it.</p></noscript>
+      <div class="controls">
+        <fieldset class="ctl">
+          <legend>Band</legend>
+          <div class="chips" id="band-chips"></div>
+        </fieldset>
+        <fieldset class="ctl">
+          <legend>Scene</legend>
+          <div class="chips" id="scene-chips"></div>
+        </fieldset>
+      </div>
+      <p class="scene-note">Stars mark the transmitters active in the selected band, outlined boxes mark the obstacles, and the white line traces the route chosen online by the ECDNet policy. The curve under the slider shows the RMSE over all bands at each step.</p>
+      <noscript><p class="scene-note">The interactive view needs JavaScript. The figures below are available without it.</p></noscript>
     </section>
   </header>
 
   <main id="main">
     <section class="shell section" id="results" aria-labelledby="results-title">
       <h2 id="results-title">Results</h2>
-
-      <div class="block">
-        <div class="prose">
-          <h3>Error against the number of readings</h3>
-          <p>On the 64 &times; 64 grid with the non-revisiting spiral sampling pattern, ECDNet attains the lowest RMSE among all compared methods at every sampling rate. With 41 readings, or 1.00% of the grid, ECDNet reaches 4.042 dBm, which is lower than the 5.335 dBm of U-Net with 164 readings, or 4.00% of the grid.</p>
-        </div>
-        <figure class="chart" id="chart-rates">
+      <div class="prose">
+        <p>On the 64 &times; 64 benchmark grid with the non-revisiting spiral sampling pattern, ECDNet attains the lowest RMSE and the highest SSIM among all compared methods at every sampling rate. At a sampling rate of 4.00%, the RMSE of ECDNet is 2.787 dBm, which is 47.8% lower than that of the strongest baseline. With only 41 readings, or 1.00% of the grid, ECDNet is more accurate than every compared method with 200 readings.</p>
+      </div>
+      <figure class="chart" id="chart-rates">
+        <div class="chart-head">
           <ul class="legend" id="legend-rates"></ul>
-          <div class="plot"></div>
-          <figcaption>RMSE of five methods at six sampling rates, reported in Table II of the paper. Hover over or focus a sampling rate to read every value.</figcaption>
-          <details class="data">
-            <summary>Show the values as a table</summary>
-            <div class="table-wrap"><table><caption class="visually-hidden">RMSE in dBm and SSIM for each method and number of readings</caption><thead><tr><th scope="col">Method</th><th scope="col">10 (0.24%)</th><th scope="col">41 (1.00%)</th><th scope="col">82 (2.00%)</th><th scope="col">123 (3.00%)</th><th scope="col">164 (4.00%)</th><th scope="col">200 (4.88%)</th></tr></thead><tbody><tr class="ours"><th scope="row">ECDNet</th><td>6.689 / 0.644</td><td>4.042 / 0.780</td><td>3.155 / 0.810</td><td>2.847 / 0.820</td><td>2.787 / 0.822</td><td>2.746 / 0.823</td></tr><tr><th scope="row">U-Net</th><td>11.005 / 0.483</td><td>8.078 / 0.589</td><td>6.335 / 0.646</td><td>5.781 / 0.665</td><td>5.335 / 0.673</td><td>4.924 / 0.684</td></tr><tr><th scope="row">KG-Net</th><td>11.428 / 0.508</td><td>10.118 / 0.547</td><td>9.114 / 0.570</td><td>8.527 / 0.582</td><td>8.098 / 0.588</td><td>7.769 / 0.593</td></tr><tr><th scope="row">AE3D</th><td>12.058 / 0.454</td><td>11.670 / 0.454</td><td>11.296 / 0.457</td><td>10.896 / 0.460</td><td>10.525 / 0.475</td><td>10.093 / 0.482</td></tr><tr><th scope="row">Kriging</th><td>13.096 / 0.605</td><td>12.468 / 0.585</td><td>12.048 / 0.565</td><td>11.827 / 0.552</td><td>12.117 / 0.529</td><td>12.164 / 0.512</td></tr></tbody></table><p>Each cell gives RMSE (dBm) / SSIM. The column headings give the number of readings and the sampling rate of the 64 &times; 64 grid.</p></div>
-          </details>
-        </figure>
-      </div>
-
-      <div class="block">
-        <div class="prose">
-          <h3>Nine continuous routes on 120 additional scenes</h3>
-          <p>The comparison was repeated along nine continuous routes on 120 held-out scenes that were generated after model selection, with transmitter powers perturbed within 1.5 dB of the nominal values. Along each route, ECDNet uses the first 41 readings and U-Net uses the first 164 readings. ECDNet attains the lower mean RMSE along all nine routes, and the lower RMSE in 88 to 112 of the 120 scenes for each route.</p>
+          <div class="seg-toggle" role="group" aria-label="Metric">
+            <button type="button" class="chip light" data-metric="rmse" aria-pressed="true">RMSE</button>
+            <button type="button" class="chip light" data-metric="ssim" aria-pressed="false">SSIM</button>
+          </div>
         </div>
-        <figure class="chart" id="chart-routes">
-          <ul class="legend" id="legend-routes"></ul>
-          <div class="plot"></div>
-          <figcaption>Mean RMSE with 95% bootstrap confidence intervals over the 120 scenes. Routes are ordered by the mean paired difference between the two methods. The random walk over legal actions is averaged over five seeds.</figcaption>
-          <details class="data">
-            <summary>Show the values as a table</summary>
-            <div class="table-wrap"><table><caption class="visually-hidden">Mean RMSE along nine routes on 120 held-out scenes</caption><thead><tr><th scope="col">Route</th><th scope="col">ECDNet, 41 readings (dBm)</th><th scope="col">U-Net, 164 readings (dBm)</th><th scope="col">Mean paired difference (dB)</th><th scope="col">Scenes where ECDNet is lower</th></tr></thead><tbody><tr><th scope="row">Random walk</th><td>4.105 [3.646, 4.600]</td><td>7.982 [7.587, 8.388]</td><td>3.877 [3.403, 4.347]</td><td>112 of 120</td></tr><tr><th scope="row">Diagonal sweep</th><td>3.518 [3.098, 3.959]</td><td>6.228 [5.836, 6.630]</td><td>2.710 [2.181, 3.247]</td><td>99 of 120</td></tr><tr><th scope="row">Outward spiral</th><td>2.712 [2.186, 3.324]</td><td>5.033 [4.771, 5.315]</td><td>2.321 [1.730, 2.848]</td><td>110 of 120</td></tr><tr><th scope="row">Autonomous policy</th><td>4.072 [3.559, 4.647]</td><td>6.297 [5.863, 6.756]</td><td>2.225 [1.572, 2.831]</td><td>96 of 120</td></tr><tr><th scope="row">Action cycle</th><td>4.656 [4.062, 5.297]</td><td>6.574 [6.162, 7.012]</td><td>1.918 [1.137, 2.661]</td><td>88 of 120</td></tr><tr><th scope="row">Center spiral (Table II)</th><td>3.234 [2.513, 4.059]</td><td>4.880 [4.625, 5.154]</td><td>1.646 [0.868, 2.318]</td><td>103 of 120</td></tr><tr><th scope="row">Column sweep</th><td>3.536 [3.003, 4.139]</td><td>4.833 [4.586, 5.089]</td><td>1.297 [0.704, 1.843]</td><td>96 of 120</td></tr><tr><th scope="row">Row sweep</th><td>3.367 [2.880, 3.915]</td><td>4.507 [4.284, 4.746]</td><td>1.140 [0.614, 1.607]</td><td>98 of 120</td></tr><tr><th scope="row">Inward rings</th><td>3.301 [2.845, 3.826]</td><td>4.141 [3.953, 4.347]</td><td>0.840 [0.330, 1.302]</td><td>88 of 120</td></tr></tbody></table><p>Brackets give 95% bootstrap confidence intervals over scenes (10,000 resamples). The paired difference is the RMSE of U-Net minus the RMSE of ECDNet.</p></div>
-          </details>
-        </figure>
-      </div>
+        <div class="plot"></div>
+        <figcaption>Reconstruction accuracy of five methods at six sampling rates, reported in Table II of the paper. Hover over or focus a sampling rate to read every value.</figcaption>
+        <details class="data">
+          <summary>Show the values as a table</summary>
+          <div class="table-wrap"><table><caption class="visually-hidden">RMSE in dBm and SSIM for each method and number of readings</caption><thead><tr><th scope="col">Method</th><th scope="col">10 (0.24%)</th><th scope="col">41 (1.00%)</th><th scope="col">82 (2.00%)</th><th scope="col">123 (3.00%)</th><th scope="col">164 (4.00%)</th><th scope="col">200 (4.88%)</th></tr></thead><tbody><tr class="ours"><th scope="row">ECDNet</th><td>6.689 / 0.644</td><td>4.042 / 0.780</td><td>3.155 / 0.810</td><td>2.847 / 0.820</td><td>2.787 / 0.822</td><td>2.746 / 0.823</td></tr><tr><th scope="row">U-Net</th><td>11.005 / 0.483</td><td>8.078 / 0.589</td><td>6.335 / 0.646</td><td>5.781 / 0.665</td><td>5.335 / 0.673</td><td>4.924 / 0.684</td></tr><tr><th scope="row">KG-Net</th><td>11.428 / 0.508</td><td>10.118 / 0.547</td><td>9.114 / 0.570</td><td>8.527 / 0.582</td><td>8.098 / 0.588</td><td>7.769 / 0.593</td></tr><tr><th scope="row">AE3D</th><td>12.058 / 0.454</td><td>11.670 / 0.454</td><td>11.296 / 0.457</td><td>10.896 / 0.460</td><td>10.525 / 0.475</td><td>10.093 / 0.482</td></tr><tr><th scope="row">Kriging</th><td>13.096 / 0.605</td><td>12.468 / 0.585</td><td>12.048 / 0.565</td><td>11.827 / 0.552</td><td>12.117 / 0.529</td><td>12.164 / 0.512</td></tr></tbody></table><p>Each cell gives RMSE (dBm) / SSIM. The column headings give the number of readings and the sampling rate of the 64 &times; 64 grid.</p></div>
+        </details>
+      </figure>
     </section>
 
     <section class="section band" id="method" aria-labelledby="method-title">
@@ -190,6 +179,8 @@
       </div>
     </section>
 
+    
+
     <section class="shell section" id="cite" aria-labelledby="cite-title">
       <h2 id="cite-title">Citation</h2>
 <pre><code id="bibtex">@article{liang2026embodied,
@@ -204,6 +195,7 @@
 
   <footer class="shell footer">
     <p>ECDNet, Nanjing University of Aeronautics and Astronautics</p>
+    <p><a href="https://arxiv.org/abs/2611.32799">arXiv:2611.32799</a></p>
   </footer>
 </body>
 </html>

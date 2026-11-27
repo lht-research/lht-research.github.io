@@ -2,247 +2,235 @@
   "use strict";
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const NS = "http://www.w3.org/2000/svg";
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-  /* ---------- Explorer ---------- */
+  /* ---------- Closed-loop explorer ---------- */
   function initExplorer() {
-    const D = window.ECDNET_EXPLORER;
+    const D = window.ECDNET_LOOP;
     if (!D) return;
-    const N = 64, TOTAL = 164, E_AT = 41;
+    const N = 64;
     const lut = new Uint8Array(768);
     for (let i = 0; i < 768; i++) lut[i] = parseInt(D.lut.substr(i * 2, 2), 16);
-    const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    const cache = new Map();
-    function mapCanvas(key, b64) {
-      if (cache.has(key)) return cache.get(key);
-      const v = decode(b64);
-      const c = document.createElement("canvas");
-      c.width = N; c.height = N;
-      const ctx = c.getContext("2d");
-      const img = ctx.createImageData(N, N);
-      for (let y = 0; y < N; y++) {
-        for (let x = 0; x < N; x++) {
-          const q = v[y * N + x], o = ((N - 1 - y) * N + x) * 4;
-          img.data[o] = lut[q * 3]; img.data[o + 1] = lut[q * 3 + 1]; img.data[o + 2] = lut[q * 3 + 2]; img.data[o + 3] = 255;
-        }
-      }
-      ctx.putImageData(img, 0, 0);
-      cache.set(key, c);
-      return c;
-    }
 
-    const panels = {};
-    document.querySelectorAll(".panel").forEach((fig) => {
-      panels[fig.dataset.panel] = { canvas: fig.querySelector("canvas") };
-    });
-    const valE = document.getElementById("val-ecdnet");
-    const valU = document.getElementById("val-unet");
+    const cvTruth = document.querySelector('[data-panel="truth"] canvas');
+    const cvEst = document.querySelector('[data-panel="estimate"] canvas');
+    const valTruth = document.getElementById("val-truth");
+    const valEst = document.getElementById("val-estimate");
     const count = document.getElementById("count");
     const scrub = document.getElementById("scrub");
     const replay = document.getElementById("replay");
-    const chips = document.getElementById("route-chips");
-    const note = document.getElementById("route-note");
+    const bandChips = document.getElementById("band-chips");
+    const sceneChips = document.getElementById("scene-chips");
+    const spark = document.getElementById("spark");
     const cbar = document.querySelector(".cbar");
 
-    let route = D.routes[0];
-    let t = TOTAL;            // readings collected, may be fractional during playback
+    let si = 0;                       // default scene: the first one
+    let scene = D.scenes[si];
+    let band = scene.active[1] ? 1 : scene.active.findIndex((v) => v); // 3.5 GHz when active
+    let t = scene.total;
     let anim = null;
-    const fade = { e: 1, u: 1, eStart: 0, uStart: 0 };
+    const cache = new Map();          // key -> array of 64x64 canvases
 
-    D.routes.forEach((r, i) => {
-      const b = document.createElement("button");
-      b.type = "button"; b.className = "chip"; b.textContent = r.name;
-      b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
-      b.addEventListener("click", () => {
-        chips.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", "false"));
-        b.setAttribute("aria-pressed", "true");
-        route = r; stop(); setT(TOTAL, false);
+    function loadGray(uri) {
+      return new Promise((res) => {
+        const img = new Image();
+        img.onload = () => {
+          const c = document.createElement("canvas");
+          c.width = img.width; c.height = img.height;
+          const x = c.getContext("2d");
+          x.drawImage(img, 0, 0);
+          res(x.getImageData(0, 0, img.width, img.height));
+        };
+        img.src = uri;
       });
-      chips.appendChild(b);
-    });
+    }
+    function colorize(gray, offsetRow) {
+      const c = document.createElement("canvas");
+      c.width = N; c.height = N;
+      const x = c.getContext("2d");
+      const out = x.createImageData(N, N);
+      for (let i = 0; i < N * N; i++) {
+        const q = gray.data[(offsetRow * N + i) * 4];
+        out.data[i * 4] = lut[q * 3]; out.data[i * 4 + 1] = lut[q * 3 + 1]; out.data[i * 4 + 2] = lut[q * 3 + 2]; out.data[i * 4 + 3] = 255;
+      }
+      x.putImageData(out, 0, 0);
+      return c;
+    }
+    async function maps(s, b) {
+      const key = s + ":" + b;
+      if (cache.has(key)) return cache.get(key);
+      const sc = D.scenes[s];
+      const [gt, fr] = await Promise.all([loadGray(sc.truth[b]), loadGray(sc.frames[b])]);
+      const entry = { truth: colorize(gt, 0), frames: D.steps.map((_, k) => colorize(fr, k * N)) };
+      cache.set(key, entry);
+      return entry;
+    }
 
+    // chips
+    D.bands.forEach((name, b) => {
+      const el = document.createElement("button");
+      el.type = "button"; el.className = "chip"; el.textContent = name; el.dataset.band = b;
+      el.addEventListener("click", () => { if (!el.disabled) { band = b; syncChips(); draw(); } });
+      bandChips.appendChild(el);
+    });
+    D.scenes.forEach((sc, s) => {
+      const el = document.createElement("button");
+      el.type = "button"; el.className = "chip"; el.textContent = sc.name;
+      el.addEventListener("click", () => {
+        si = s; scene = sc;
+        if (!scene.active[band]) band = scene.active.findIndex((v) => v);
+        syncChips(); buildSpark(); play();
+      });
+      sceneChips.appendChild(el);
+    });
+    function syncChips() {
+      bandChips.querySelectorAll(".chip").forEach((el) => {
+        const b = +el.dataset.band;
+        el.disabled = !scene.active[b];
+        el.title = el.disabled ? "No transmitter is active in this band in the selected scene" : "";
+        el.setAttribute("aria-pressed", b === band ? "true" : "false");
+      });
+      sceneChips.querySelectorAll(".chip").forEach((el, s) => el.setAttribute("aria-pressed", s === si ? "true" : "false"));
+    }
+
+    // geometry helpers (y = 0 is the bottom row)
+    const cell = (p, s) => [(p[0] + 0.5) * s, (N - 1 - p[1] + 0.5) * s];
     function sizeCanvas(cv) {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const w = Math.round(cv.clientWidth * dpr);
       if (cv.width !== w || cv.height !== w) { cv.width = w; cv.height = w; }
       return w;
     }
-
-    function cellXY(p, s) { return [(p[0] + 0.5) * s, (N - 1 - p[1] + 0.5) * s]; }
-
-    function drawObstacles(ctx, s, color, fill) {
+    function obstacles(ctx, s) {
       ctx.save();
-      ctx.lineWidth = Math.max(1, s * 0.22);
-      ctx.strokeStyle = color;
-      D.obstacles.forEach(([x0, y0, x1, y1]) => {
-        const X = x0 * s, Y = (N - y1) * s, W = (x1 - x0) * s, H = (y1 - y0) * s;
-        if (fill) { ctx.fillStyle = fill; ctx.fillRect(X, Y, W, H); }
-        ctx.strokeRect(X + ctx.lineWidth / 2, Y + ctx.lineWidth / 2, W - ctx.lineWidth, H - ctx.lineWidth);
+      ctx.lineWidth = Math.max(1.2, s * 0.24); ctx.strokeStyle = "#14172a";
+      scene.obstacles.forEach(([x0, y0, x1, y1]) => {
+        const lw = ctx.lineWidth;
+        ctx.strokeRect(x0 * s + lw / 2, (N - y1) * s + lw / 2, (x1 - x0) * s - lw, (y1 - y0) * s - lw);
       });
       ctx.restore();
     }
-
-    function drawRoute(ctx, s, upto, dots) {
-      const pts = route.path;
-      const n = Math.min(pts.length, Math.floor(upto));
-      if (n < 1) return;
+    function route(ctx, s, upto) {
+      const pts = scene.route, n = Math.max(0, Math.min(pts.length - 1, Math.floor(upto)));
       ctx.save();
       ctx.lineJoin = "round"; ctx.lineCap = "round";
-      ctx.strokeStyle = "rgba(255,255,255,0.92)";
-      ctx.lineWidth = Math.max(1.2, s * 0.2);
+      ctx.strokeStyle = "rgba(255,255,255,0.92)"; ctx.lineWidth = Math.max(1.4, s * 0.22);
       ctx.beginPath();
-      for (let i = 0; i < n; i++) { const [x, y] = cellXY(pts[i], s); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-      const frac = upto - Math.floor(upto);
-      if (frac > 0 && n < pts.length) {
-        const [x0, y0] = cellXY(pts[n - 1], s), [x1, y1] = cellXY(pts[n], s);
-        ctx.lineTo(x0 + (x1 - x0) * frac, y0 + (y1 - y0) * frac);
-      }
+      for (let i = 0; i <= n; i++) { const [x, y] = cell(pts[i], s); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+      const f = upto - Math.floor(upto);
+      let [ux, uy] = cell(pts[n], s);
+      if (f > 0 && n + 1 < pts.length) { const [x1, y1] = cell(pts[n + 1], s); ux += (x1 - ux) * f; uy += (y1 - uy) * f; ctx.lineTo(ux, uy); }
       ctx.stroke();
-      if (dots) {
-        const r = Math.max(1.6, s * 0.28);
-        for (let i = 0; i < n; i++) {
-          const [x, y] = cellXY(pts[i], s);
-          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
-          ctx.fillStyle = "#ffffff"; ctx.fill();
-          ctx.lineWidth = Math.max(1, s * 0.12); ctx.strokeStyle = "rgba(20,23,42,0.85)"; ctx.stroke();
-        }
-      }
-      ctx.restore();
-    }
-
-    function drawUav(ctx, s, upto) {
-      const pts = route.path;
-      const i = Math.min(pts.length - 1, Math.max(0, Math.floor(upto) - 1));
-      let [x, y] = cellXY(pts[i], s);
-      const frac = upto - Math.floor(upto);
-      if (frac > 0 && i + 1 < pts.length) { const [x1, y1] = cellXY(pts[i + 1], s); x += (x1 - x) * frac; y += (y1 - y) * frac; }
-      ctx.save();
-      ctx.beginPath(); ctx.arc(x, y, Math.max(8, s * 1.5), 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255,255,255,0.22)"; ctx.fill();
-      ctx.beginPath(); ctx.arc(x, y, Math.max(4, s * 0.75), 0, Math.PI * 2);
-      ctx.fillStyle = "#ffffff"; ctx.fill();
+      ctx.beginPath(); ctx.arc(ux, uy, Math.max(9, s * 1.6), 0, Math.PI * 2); ctx.fillStyle = "rgba(255,255,255,0.22)"; ctx.fill();
+      ctx.beginPath(); ctx.arc(ux, uy, Math.max(4.5, s * 0.8), 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
       ctx.lineWidth = Math.max(1.2, s * 0.16); ctx.strokeStyle = "#14172a"; ctx.stroke();
       ctx.restore();
     }
-
-    function star(ctx, cx, cy, R) {
-      ctx.beginPath();
-      for (let k = 0; k < 10; k++) {
-        const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? R * 0.45 : R;
-        ctx.lineTo(cx + rr * Math.cos(a), cy + rr * Math.sin(a));
-      }
-      ctx.closePath();
-    }
-
-    function drawTx(ctx, s) {
+    function stars(ctx, s) {
       ctx.save();
-      D.tx.forEach((p) => {
-        const [x, y] = cellXY(p, s);
-        star(ctx, x, y, Math.max(7, s * 1.6));
-        ctx.fillStyle = "#ffffff"; ctx.fill();
+      scene.tx.forEach((tx) => {
+        if (!tx.b[band]) return;
+        const [cx, cy] = cell([tx.x, tx.y], s), R = Math.max(8, s * 1.7);
+        ctx.beginPath();
+        for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? R * 0.45 : R; ctx.lineTo(cx + rr * Math.cos(a), cy + rr * Math.sin(a)); }
+        ctx.closePath(); ctx.fillStyle = "#fff"; ctx.fill();
         ctx.lineWidth = Math.max(1.2, s * 0.18); ctx.strokeStyle = "#14172a"; ctx.stroke();
       });
       ctx.restore();
     }
-
-    function drawEmpty(ctx, w, s) {
-      ctx.fillStyle = "#1d2138"; ctx.fillRect(0, 0, w, w);
-      ctx.save();
-      ctx.strokeStyle = "rgba(169,174,198,0.10)"; ctx.lineWidth = 1;
-      for (let k = 8; k < N; k += 8) {
-        ctx.beginPath(); ctx.moveTo(k * s, 0); ctx.lineTo(k * s, w); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, k * s); ctx.lineTo(w, k * s); ctx.stroke();
-      }
-      ctx.restore();
-      drawObstacles(ctx, s, "rgba(169,174,198,0.55)");
+    function frameAt(tt) {
+      const st = D.steps;
+      let k = 0;
+      while (k + 1 < st.length && st[k + 1] <= tt) k++;
+      const k2 = Math.min(st.length - 1, k + 1);
+      const a = k2 === k ? 0 : Math.min(1, Math.max(0, (tt - st[k]) / (st[k2] - st[k])));
+      return { k, k2, a };
     }
 
-    function drawPanel(name) {
-      const cv = panels[name].canvas;
-      const w = sizeCanvas(cv), s = w / N;
-      const ctx = cv.getContext("2d");
+    let token = 0;
+    async function draw() {
+      const my = ++token;
+      const m = await maps(si, band);
+      if (my !== token) return;
+      const { k, k2, a } = frameAt(t);
+      // ground truth
+      let w = sizeCanvas(cvTruth), s = w / N, ctx = cvTruth.getContext("2d");
       ctx.imageSmoothingEnabled = false;
-      ctx.clearRect(0, 0, w, w);
-      if (name === "truth") {
-        ctx.drawImage(mapCanvas("truth", D.truth), 0, 0, w, w);
-        drawObstacles(ctx, s, "#14172a");
-        drawRoute(ctx, s, t, false);
-        drawTx(ctx, s);
-        if (t > 0 && t < TOTAL) drawUav(ctx, s, t);
-        return;
-      }
-      const limit = name === "ecdnet" ? E_AT : TOTAL;
-      const alpha = name === "ecdnet" ? fade.e : fade.u;
-      drawEmpty(ctx, w, s);
-      if (t >= limit) {
-        ctx.save(); ctx.globalAlpha = alpha;
-        ctx.drawImage(mapCanvas(route.id + name, route[name]), 0, 0, w, w);
-        ctx.restore();
-        ctx.save(); ctx.globalAlpha = alpha; drawObstacles(ctx, s, "#14172a"); ctx.restore();
-      }
-      drawRoute(ctx, s, Math.min(t, limit), true);
+      ctx.drawImage(m.truth, 0, 0, w, w); obstacles(ctx, s); route(ctx, s, t); stars(ctx, s);
+      // estimate
+      w = sizeCanvas(cvEst); s = w / N; ctx = cvEst.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      ctx.globalAlpha = 1; ctx.drawImage(m.frames[k], 0, 0, w, w);
+      if (a > 0) { ctx.globalAlpha = a; ctx.drawImage(m.frames[k2], 0, 0, w, w); ctx.globalAlpha = 1; }
+      obstacles(ctx, s); route(ctx, s, t);
+      // text
+      const rb = scene.rmse.band[band][a > 0.5 ? k2 : k], ra = scene.rmse.all[a > 0.5 ? k2 : k];
+      valTruth.textContent = D.bands[band];
+      if (D.showValues === false) valEst.textContent = D.bands[band];
+      else valEst.innerHTML = (rb == null ? "" : `<strong>RMSE ${rb.toFixed(2)} dBm</strong> at ${D.bands[band]}<br>`) + `${ra.toFixed(2)} dBm over all bands`;
+      count.innerHTML = `Step <strong>${Math.floor(t)}</strong> of ${scene.total}`;
+      scrub.max = scene.total; scrub.value = Math.floor(t);
+      moveSpark();
+      if (cbar) cbar.style.setProperty("--cbar-h", cvTruth.clientHeight + "px");
     }
 
-    function captions() {
-      const r = route.rmse, n = Math.floor(t);
-      valE.innerHTML = t >= E_AT
-        ? `<strong>RMSE ${r.e35.toFixed(2)} dBm</strong> at 3.5 GHz<br>${r.e4.toFixed(2)} dBm over four bands`
-        : `Reconstruction at reading 41<br>${Math.min(n, E_AT)} of 41 readings`;
-      valU.innerHTML = t >= TOTAL
-        ? `<strong>RMSE ${r.u35.toFixed(2)} dBm</strong> at 3.5 GHz<br>${r.u4.toFixed(2)} dBm over four bands`
-        : `Reconstruction at reading 164<br>${n} of 164 readings`;
-      count.innerHTML = `<strong>${n}</strong> of 164 readings`;
-      note.textContent = route.note;
+    // RMSE sparkline under the slider
+    let sparkDot = null, sparkLine = null, sparkGeom = null;
+    function buildSpark() {
+      spark.textContent = "";
+      const W = Math.max(200, spark.clientWidth), H = 46;
+      const vals = scene.rmse.all, st = D.steps;
+      const hi = Math.max(...vals), lo = Math.min(...vals);
+      const pad = (hi - lo) * 0.12 || 1;
+      const xs = (v) => (v / scene.total) * W, ys = (v) => 4 + (H - 8) * (1 - (v - (lo - pad)) / ((hi + pad) - (lo - pad)));
+      const svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("width", W); svg.setAttribute("height", H);
+      const p = document.createElementNS(NS, "polyline");
+      p.setAttribute("points", vals.map((v, i) => `${xs(st[i])},${ys(v)}`).join(" "));
+      p.setAttribute("fill", "none"); p.setAttribute("stroke", "rgba(238,240,246,0.75)"); p.setAttribute("stroke-width", "1.6"); p.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(p);
+      sparkLine = document.createElementNS(NS, "line");
+      sparkLine.setAttribute("y1", 0); sparkLine.setAttribute("y2", H); sparkLine.setAttribute("stroke", "rgba(238,240,246,0.35)");
+      svg.appendChild(sparkLine);
+      sparkDot = document.createElementNS(NS, "circle");
+      sparkDot.setAttribute("r", 4); sparkDot.setAttribute("fill", "#fff"); sparkDot.setAttribute("stroke", "#14172a"); sparkDot.setAttribute("stroke-width", 1.5);
+      svg.appendChild(sparkDot);
+      spark.appendChild(svg);
+      sparkGeom = { xs, ys };
+      moveSpark();
     }
-
-    function render() {
-      ["truth", "ecdnet", "unet"].forEach(drawPanel);
-      captions();
-      if (cbar) cbar.style.setProperty("--cbar-h", panels.truth.canvas.clientHeight + "px");
-    }
-
-    function setT(v, fromPlay) {
-      const prev = t;
-      t = v;
-      if (fromPlay) {
-        const now = performance.now();
-        if (prev < E_AT && t >= E_AT) { fade.e = 0; fade.eStart = now; }
-        if (prev < TOTAL && t >= TOTAL) { fade.u = 0; fade.uStart = now; }
-      } else { fade.e = 1; fade.u = 1; }
-      scrub.value = Math.floor(t);
-      if (!fromPlay) render();
+    function moveSpark() {
+      if (!sparkGeom) return;
+      const { k, k2, a } = frameAt(t);
+      const v = scene.rmse.all[k] * (1 - a) + scene.rmse.all[k2] * a;
+      const x = sparkGeom.xs(t), y = sparkGeom.ys(v);
+      sparkDot.setAttribute("cx", x); sparkDot.setAttribute("cy", y);
+      sparkLine.setAttribute("x1", x); sparkLine.setAttribute("x2", x);
     }
 
     function stop() { if (anim) { cancelAnimationFrame(anim); anim = null; } }
-
     function play() {
       stop();
-      if (reduceMotion) { setT(TOTAL, false); return; }
-      const rate = 30, hold = 650;          // readings per second, pause after reading 41
-      const tHold = E_AT / rate * 1000;
+      if (reduceMotion) { t = scene.total; draw(); return; }
+      const rate = 26; // steps per second
       const start = performance.now();
-      setT(0, true);
-      render();
       const step = (now) => {
-        const el = now - start;
-        let v = el < tHold ? el / 1000 * rate : el < tHold + hold ? E_AT : E_AT + (el - tHold - hold) / 1000 * rate;
-        v = Math.min(TOTAL, v);
-        setT(v, true);
-        fade.e = Math.min(1, (now - fade.eStart) / 380);
-        fade.u = Math.min(1, (now - fade.uStart) / 380);
-        render();
-        if (v < TOTAL || fade.u < 1) anim = requestAnimationFrame(step); else anim = null;
+        t = Math.max(0, Math.min(scene.total, (now - start) / 1000 * rate));
+        draw();
+        if (t < scene.total) anim = requestAnimationFrame(step); else anim = null;
       };
+      t = 0; draw();
       anim = requestAnimationFrame(step);
     }
 
-    scrub.addEventListener("input", () => { stop(); setT(+scrub.value, false); });
+    scrub.addEventListener("input", () => { stop(); t = +scrub.value; draw(); });
     replay.addEventListener("click", play);
-    new ResizeObserver(() => render()).observe(panels.truth.canvas);
-    render();
-    if (!reduceMotion) setTimeout(play, 500);
+    new ResizeObserver(() => { buildSpark(); draw(); }).observe(cvTruth);
+    syncChips(); buildSpark(); draw();
+    if (!reduceMotion) setTimeout(play, 600);
   }
 
-  /* ---------- Shared chart helpers ---------- */
+  /* ---------- Chart helpers ---------- */
   function el(name, attrs, parent) {
     const e = document.createElementNS(NS, name);
     for (const k in attrs) e.setAttribute(k, attrs[k]);
@@ -250,21 +238,10 @@
     return e;
   }
   function txt(parent, x, y, s, attrs) { const t = el("text", Object.assign({ x, y }, attrs || {}), parent); t.textContent = s; return t; }
-  function legend(ul, items) {
-    ul.textContent = "";
-    items.forEach(([label, color, kind]) => {
-      const li = document.createElement("li");
-      const k = document.createElement("span");
-      k.className = kind === "dot" ? "key dot" : "key";
-      k.style.background = color;
-      li.appendChild(k); li.appendChild(document.createTextNode(label));
-      ul.appendChild(li);
-    });
-  }
-  function makeTip(plot) {
+  function makeTip(host) {
     const tip = document.createElement("div");
     tip.className = "tip"; tip.setAttribute("aria-hidden", "true");
-    plot.appendChild(tip);
+    host.appendChild(tip);
     return {
       show(head, rows, x, y) {
         tip.textContent = "";
@@ -276,7 +253,7 @@
           const v = document.createElement("b"); v.textContent = value;
           r.append(k, l, v); tip.appendChild(r);
         });
-        const pw = plot.clientWidth, tw = tip.offsetWidth || 220;
+        const pw = host.clientWidth, tw = tip.offsetWidth || 240;
         tip.style.left = Math.max(0, Math.min(pw - tw, x + 14)) + "px";
         tip.style.top = Math.max(0, y - 10) + "px";
         tip.classList.add("on");
@@ -284,58 +261,71 @@
       hide() { tip.classList.remove("on"); },
     };
   }
-  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-  /* ---------- Chart: RMSE against readings ---------- */
+  /* ---------- Chart: accuracy against readings ---------- */
   function chartRates(C) {
     const fig = document.getElementById("chart-rates");
     if (!fig) return;
     const plot = fig.querySelector(".plot");
     const R = C.rates;
-    const color = { ecdnet: css("--ecd"), unet: css("--unet"), kgnet: css("--grey-1"), ae3d: css("--grey-2"), kriging: css("--grey-3") };
-    legend(document.getElementById("legend-rates"), R.methods.map((m) => [m.name, color[m.id], "line"]));
+    const color = { ecdnet: css("--ecd"), unet: css("--grey-1"), kgnet: css("--grey-2"), ae3d: css("--grey-3"), kriging: css("--grey-4") };
+    const dash = { ecdnet: "", unet: "", kgnet: "6 4", ae3d: "2 3", kriging: "8 3 2 3" };
+    const ul = document.getElementById("legend-rates");
+    R.methods.forEach((m) => {
+      const li = document.createElement("li");
+      const svg = el("svg", { width: 22, height: 8, "aria-hidden": "true" });
+      el("line", { x1: 1, x2: 21, y1: 4, y2: 4, stroke: color[m.id], "stroke-width": m.id === "ecdnet" ? 2.6 : 2, "stroke-dasharray": dash[m.id], "stroke-linecap": "round" }, svg);
+      li.appendChild(svg); li.appendChild(document.createTextNode(m.name));
+      ul.appendChild(li);
+    });
     const tip = makeTip(plot);
+    let metric = "rmse";
+    fig.querySelectorAll("[data-metric]").forEach((b) => b.addEventListener("click", () => {
+      metric = b.dataset.metric;
+      fig.querySelectorAll("[data-metric]").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+      draw();
+    }));
 
     function draw() {
       plot.querySelectorAll("svg").forEach((s) => s.remove());
       const W = Math.max(320, plot.clientWidth), narrow = W < 560;
-      const H = narrow ? 300 : 380;
-      const m = { l: 44, r: narrow ? 64 : 82, t: 34, b: narrow ? 52 : 56 };
+      const H = narrow ? 300 : 390;
+      const m = { l: 48, r: narrow ? 66 : 86, t: 34, b: narrow ? 52 : 58 };
       const iw = W - m.l - m.r, ih = H - m.t - m.b;
+      const isR = metric === "rmse";
+      const y0 = isR ? 0 : 0.4, y1 = isR ? 14 : 0.9, ystep = isR ? 2 : 0.1;
       const xs = (n) => m.l + (n / 210) * iw;
-      const ys = (v) => m.t + ih - (v / 14) * ih;
+      const ys = (v) => m.t + ih - ((v - y0) / (y1 - y0)) * ih;
       const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img",
-        "aria-label": "Line chart of RMSE against the number of readings for five methods. ECDNet is lowest at every point." });
+        "aria-label": `Line chart of ${isR ? "RMSE" : "SSIM"} against the number of readings for five methods. ECDNet is best at every point.` });
       plot.insertBefore(svg, plot.firstChild);
       const fs = narrow ? 12.5 : 14;
-      for (let v = 0; v <= 14; v += 2) {
+      for (let v = y0; v <= y1 + 1e-9; v += ystep) {
         el("line", { x1: m.l, x2: W - m.r, y1: ys(v), y2: ys(v), stroke: css("--rule"), "stroke-width": 1 }, svg);
-        txt(svg, m.l - 8, ys(v) + 4.5, String(v), { "text-anchor": "end", "font-size": fs });
+        txt(svg, m.l - 8, ys(v) + 4.5, isR ? String(Math.round(v)) : v.toFixed(1), { "text-anchor": "end", "font-size": fs });
       }
-      txt(svg, 0, 14, "RMSE (dBm)", { "font-size": fs });
+      txt(svg, 0, 14, isR ? "RMSE (dBm)" : "SSIM", { "font-size": fs });
       R.readings.forEach((n, i) => {
         txt(svg, xs(n), H - m.b + 20, String(n), { "text-anchor": "middle", "font-size": fs });
         if (!narrow) txt(svg, xs(n), H - m.b + 38, R.percent[i], { "text-anchor": "middle", "font-size": 12.5, fill: css("--ink-3") });
       });
       txt(svg, m.l + iw / 2, H - 4, "Number of readings", { "text-anchor": "middle", "font-size": fs });
-      // lines, greys first so the two compared methods sit on top
+      if (isR) {
+        const v = R.methods[0].rmse[1];
+        el("line", { x1: xs(41), x2: xs(200), y1: ys(v), y2: ys(v), stroke: css("--ecd"), "stroke-width": 1, "stroke-dasharray": "3 4", opacity: 0.7 }, svg);
+      }
       [...R.methods].reverse().forEach((mm) => {
-        const pts = mm.rmse.map((v, i) => `${xs(R.readings[i])},${ys(v)}`).join(" ");
-        el("polyline", { points: pts, fill: "none", stroke: color[mm.id], "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
-        mm.rmse.forEach((v, i) => el("circle", { cx: xs(R.readings[i]), cy: ys(v), r: 4, fill: color[mm.id], stroke: "#fff", "stroke-width": 2 }, svg));
+        const vals = mm[metric];
+        const own = mm.id === "ecdnet";
+        el("polyline", { points: vals.map((v, i) => `${xs(R.readings[i])},${ys(v)}`).join(" "), fill: "none", stroke: color[mm.id],
+          "stroke-width": own ? 2.6 : 2, "stroke-dasharray": dash[mm.id], "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+        vals.forEach((v, i) => el("circle", { cx: xs(R.readings[i]), cy: ys(v), r: own ? 4.5 : 3.5, fill: color[mm.id], stroke: "#fff", "stroke-width": 2 }, svg));
       });
-      // end labels
-      R.methods.forEach((mm) => {
-        const v = mm.rmse[mm.rmse.length - 1];
-        txt(svg, xs(200) + 10, ys(v) + 4.5, mm.name, { "font-size": fs, fill: css("--ink") });
-      });
-      // the two operating points discussed in the text
-      const e41 = R.methods[0].rmse[1], u164 = R.methods[1].rmse[4];
-      el("line", { x1: xs(41), x2: xs(164), y1: ys(e41), y2: ys(e41), stroke: css("--ecd"), "stroke-width": 1, opacity: 0.45 }, svg);
-      txt(svg, xs(41), ys(e41) + 20, e41.toFixed(3), { "text-anchor": "middle", "font-size": fs, fill: css("--ink") });
-      txt(svg, xs(164), ys(u164) - 11, u164.toFixed(3), { "text-anchor": "middle", "font-size": fs, fill: css("--ink") });
+      // end labels, spaced so they do not collide
+      const ends = R.methods.map((mm) => ({ name: mm.name, y: ys(mm[metric][5]), id: mm.id })).sort((a, b) => a.y - b.y);
+      for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 16) ends[i].y = ends[i - 1].y + 16;
+      ends.forEach((e) => txt(svg, xs(200) + 10, e.y + 4.5, e.name, { "font-size": fs, fill: e.id === "ecdnet" ? css("--ink") : css("--ink-2"), "font-weight": e.id === "ecdnet" ? 700 : 400 }));
 
-      // crosshair layer
       const cross = el("line", { y1: m.t, y2: m.t + ih, stroke: css("--ink-3"), "stroke-width": 1, opacity: 0 }, svg);
       const hit = el("rect", { x: m.l, y: m.t, width: iw, height: ih, fill: "transparent", tabindex: 0,
         "aria-label": "Chart values. Use the left and right arrow keys to move between sampling rates." }, svg);
@@ -343,8 +333,9 @@
       function show(i) {
         idx = i; const n = R.readings[i];
         cross.setAttribute("x1", xs(n)); cross.setAttribute("x2", xs(n)); cross.setAttribute("opacity", 1);
-        const rows = [...R.methods].sort((a, b) => a.rmse[i] - b.rmse[i]).map((mm) => [color[mm.id], mm.name, mm.rmse[i].toFixed(3) + " dBm"]);
-        tip.show(`${n} readings (${R.percent[i]})`, rows, xs(n) * plot.clientWidth / W, m.t);
+        const rows = [...R.methods].sort((a, b) => isR ? a.rmse[i] - b.rmse[i] : b.ssim[i] - a.ssim[i])
+          .map((mm) => [color[mm.id], mm.name, isR ? mm.rmse[i].toFixed(3) + " dBm" : mm.ssim[i].toFixed(3)]);
+        tip.show(`${n} readings (${R.percent[i]})`, rows, xs(n), m.t);
       }
       function hide() { idx = -1; cross.setAttribute("opacity", 0); tip.hide(); }
       hit.addEventListener("pointermove", (ev) => {
@@ -360,65 +351,6 @@
         if (ev.key === "ArrowLeft") { show(Math.max(0, idx - 1)); ev.preventDefault(); }
         if (ev.key === "Escape") hide();
       });
-    }
-    draw();
-    new ResizeObserver(() => draw()).observe(plot);
-  }
-
-  /* ---------- Chart: nine routes ---------- */
-  function chartRoutes(C) {
-    const fig = document.getElementById("chart-routes");
-    if (!fig) return;
-    const plot = fig.querySelector(".plot");
-    const R = C.routes;
-    const ce = css("--ecd"), cu = css("--unet");
-    legend(document.getElementById("legend-routes"), [["ECDNet, first 41 readings", ce, "dot"], ["U-Net, first 164 readings", cu, "dot"]]);
-    const tip = makeTip(plot);
-
-    function draw() {
-      plot.querySelectorAll("svg").forEach((s) => s.remove());
-      const W = Math.max(320, plot.clientWidth), narrow = W < 560;
-      const fs = narrow ? 12.5 : 14;
-      const row = narrow ? 34 : 38;
-      const m = { l: narrow ? 128 : 190, r: 18, t: 8, b: 46 };
-      const H = m.t + row * R.length + m.b;
-      const iw = W - m.l - m.r;
-      const xs = (v) => m.l + (v / 9) * iw;
-      const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img",
-        "aria-label": "Dot plot of mean RMSE with confidence intervals along nine routes. ECDNet is lower along every route." });
-      plot.insertBefore(svg, plot.firstChild);
-      for (let v = 0; v <= 9; v++) {
-        el("line", { x1: xs(v), x2: xs(v), y1: m.t, y2: m.t + row * R.length, stroke: css("--rule"), "stroke-width": 1 }, svg);
-        txt(svg, xs(v), m.t + row * R.length + 20, String(v), { "text-anchor": "middle", "font-size": fs });
-      }
-      txt(svg, m.l + iw / 2, H - 6, "Mean RMSE (dBm)", { "text-anchor": "middle", "font-size": fs });
-      R.forEach((r, i) => {
-        const y = m.t + row * i + row / 2;
-        const g = el("g", { tabindex: 0, role: "listitem",
-          "aria-label": `${r.name}. ECDNet ${r.e[0].toFixed(3)} dBm, U-Net ${r.u[0].toFixed(3)} dBm, ECDNet lower in ${r.wins} of ${r.scenes} scenes.` }, svg);
-        el("rect", { x: 0, y: y - row / 2, width: W, height: row, fill: "transparent", class: "hitrow" }, g);
-        txt(g, m.l - 14, y + 4.5, r.name, { "text-anchor": "end", "font-size": fs, fill: css("--ink") });
-        el("line", { x1: xs(r.e[0]), x2: xs(r.u[0]), y1: y, y2: y, stroke: css("--grey-3"), "stroke-width": 1.5 }, g);
-        [[r.e, ce, -4], [r.u, cu, 4]].forEach(([v, c, dy]) => {
-          el("line", { x1: xs(v[1]), x2: xs(v[2]), y1: y + dy, y2: y + dy, stroke: c, "stroke-width": 2, "stroke-linecap": "round", opacity: 0.55 }, g);
-          el("circle", { cx: xs(v[0]), cy: y + dy, r: 5, fill: c, stroke: "#fff", "stroke-width": 2 }, g);
-        });
-        const on = () => {
-          g.querySelector(".hitrow").setAttribute("fill", "rgba(43,98,168,0.06)");
-          tip.show(r.name, [
-            [ce, "ECDNet, 41 readings", `${r.e[0].toFixed(3)} dBm`],
-            ["", "95% CI", `${r.e[1].toFixed(2)} to ${r.e[2].toFixed(2)}`],
-            [cu, "U-Net, 164 readings", `${r.u[0].toFixed(3)} dBm`],
-            ["", "95% CI", `${r.u[1].toFixed(2)} to ${r.u[2].toFixed(2)}`],
-            ["", "Paired difference", `${r.d[0].toFixed(3)} dB`],
-            ["", "ECDNet lower in", `${r.wins} of ${r.scenes}`],
-          ], xs(r.u[0]) * plot.clientWidth / W, (y + row / 2) * plot.clientWidth / W);
-        };
-        const off = () => { g.querySelector(".hitrow").setAttribute("fill", "transparent"); tip.hide(); };
-        g.addEventListener("pointerenter", on); g.addEventListener("pointerleave", off);
-        g.addEventListener("focus", on); g.addEventListener("blur", off);
-      });
-      svg.setAttribute("role", "list");
     }
     draw();
     new ResizeObserver(() => draw()).observe(plot);
@@ -465,10 +397,7 @@
 
   function start() {
     try { initExplorer(); } catch (e) { console.error(e); }
-    if (window.ECDNET_CHARTS) {
-      try { chartRates(window.ECDNET_CHARTS); } catch (e) { console.error(e); }
-      try { chartRoutes(window.ECDNET_CHARTS); } catch (e) { console.error(e); }
-    }
+    if (window.ECDNET_CHARTS) { try { chartRates(window.ECDNET_CHARTS); } catch (e) { console.error(e); } }
     try { initLatency(); } catch (e) { console.error(e); }
     initBib();
   }
